@@ -227,6 +227,19 @@ ggplot(data = privacy, aes(x = age, y = uniq_frac, color = gender)) +
 add_credits()
 dev.off()
 
+active_stations = dbGetQuery(myPostgres$con,"SELECT * FROM monthly_active_stations ORDER BY date")
+
+png(filename = "graphs/bikes_used.png", width = 640, height = 480)
+ggplot(data = filter(active_bikes, date <= "2017-07-31"), aes(x = date, y = bikes)) +
+  geom_line(size = 1, color = citi_hex) +
+  scale_x_date("") +
+  scale_y_continuous("Number of Citi Bikes Used\n", labels = comma) +
+  expand_limits(y = 0) +
+  ggtitle("Unique Bikes Used Per Day", "Program expansion in August 2015 added nearly 2,000 bikes") +
+  theme_wsj(base_size = 18)
+dev.off()
+
+
 remoteH2O <- h2o.init(ip='34.200.247.252', startH2O=FALSE, port = 54321, nthreads = -1) #  Connection successful!
 
 # Push the data into h2o
