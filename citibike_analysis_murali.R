@@ -297,4 +297,150 @@ ggplot(data = by_sta_213_tues_wed,
         legend.key.height = unit(0.5, "lines"),
         legend.key.width = unit(2, "lines"))
 
+#Build model to predict number of bikes available at each station at any given time
+bike_count = dbGetQuery(myPostgres$con, 
+                      "select bcs.*, s.name, 
+                            w.precipitation, w.snow_depth, w.max_temperature, w.average_wind_speed,
+                            s.latitude, s.longitude 
+                      from bike_count_at_stations bcs
+                      left join central_park_weather_observations w
+                        on w.date = date(bcs.interval)
+                      inner join stations s
+                        on s.id = bcs.station_id
+                      where
+                        date(interval) >= '2016-01-01' 
+                        and date(interval) < '2016-02-01'
+                      order by s.name, interval")
 
+bike_count <- bike_count %>%
+  select('interval', 'day_of_week', 'holiday', 'name', 
+         'precipitation', 'snow_depth', 'max_temperature', 'average_wind_speed',
+         'depart_count', 'new_bike_count','arrive_count', 'removed_count', 
+         'ending_bike_count')
+
+lag_1 <- function(x) lag(x)
+
+by_bike_count <- bike_count %>%
+  mutate_at(funs(as.factor), .vars = c("holiday", "name")) %>%
+  mutate(day_of_week = factor(weekdays(interval)))  %>%
+  arrange(name, interval) %>%
+  group_by(name) %>%
+  mutate(beginning_count = lag_1(ending_bike_count))  %>%
+  filter(!is.na(beginning_count)) %>%
+  select(-interval)  %>%
+  select("day_of_week", "holiday", 'precipitation', 'snow_depth', 'max_temperature', 
+         'average_wind_speed',"depart_count", "new_bike_count", 
+          "arrive_count", "removed_count", "name", "beginning_count", 
+          "ending_bike_count")  
+
+by_bike_count %>%
+  write.csv(file = 'bike_count_data.csv') 
+  
+#temp <- by_bike_count %>%
+#  filter(name == 'Lafayette St & E 8 St')
+
+##Apply h2o deep learning
+localH2O <- h2o.init(ip = "localhost", port = 54321, startH2O = TRUE) 
+remoteH2O <- h2o.init(ip='34.200.247.252', startH2O=FALSE, port = 54321, nthreads = -1) #  Connection successful!
+
+# Push the data into h2o
+bikecount.hex = h2o.importFile(path = "bike_count_data.csv", destination_frame = "bikecount.hex")
+class(bikecount.hex)
+summary(bikecount.hex)
+
+#RM ending_bike_count
+bikecount.hex = bikecount.hex[,-1]
+
+# Split dataset giving the training dataset 75% of the data
+bikecount.split <- h2o.splitFrame(data=bikecount.hex, c(0.6,0.2), seed=1234)
+
+# Create a training set from the 1st dataset in the split
+bikecount.hex.train <- bikecount.split[[1]] #60%
+
+# Create a testing set from the 2nd dataset in the split
+bikecount.hex.test <- bikecount.split[[2]] #20%
+
+# Create a testing set from the 2nd dataset in the split
+bikecount.hex.valid <- bikecount.split[[3]] #20%
+
+response <- c("depart_count", "new_bike_count", 
+              "arrive_count", "removed_count")
+predictors <- setdiff(names(bikecount.hex), response)
+
+predictors <- predictors[! predictors %in% c('C1', 'ending_bike_count')]
+#h2o deep net 
+models <- list()
+
+
+for (y in response){
+  
+  models[[y]] <- h2o.deeplearning(model_id="dl_model_faster", 
+                                  training_frame=bikecount.hex.train,
+                                  validation_frame=bikecount.hex.valid,   ## validation dataset: used for scoring and early stopping
+                                  x=predictors,
+                                  y=y,
+                                  hidden=c(32,32,32),                  ## small network, runs faster
+                                  epochs=1000000,                      ## hopefully converges earlier...
+                                  score_validation_samples=10000,      ## sample the validation dataset (faster)
+                                  stopping_rounds=2,
+                                  stopping_metric="MSE",               ## could be "MSE","logloss","r2"
+                                  stopping_tolerance=0.01,
+                                  variable_importances=T 
+                            )
+  
+}
+lapply(models, summary)
+
+test_results = data.frame("name" = as.data.frame(bikecount.hex.test)[['name']])
+
+## outsample 
+## Converting H2O format into data frame 
+for (y in response){
+  df_yhat_test <- as.data.frame(h2o.predict(models[[y]], bikecount.hex.test[,predictors]) ) 
+  predH2O<- df_yhat_test$predict 
+  #results[[y]] <- data.frame('pred' = as.integer(predH2O), 'real' = as.data.frame(bikecount.hex.test[[y]]))
+  test_results = cbind(test_results, y = as.integer(predH2O))
+}
+
+colnames(test_results) = c('name', response)
+test_results = cbind(test_results, beginning_count = as.data.frame(bikecount.hex.test$beginning_count))
+test_results = cbind(test_results, end_bike_count_pred = 
+                                          test_results$beginning_count
+                                          +test_results$arrive_count - test_results$depart_count 
+                                          -test_results$removed_count + test_results$new_bike_count)
+test_results = cbind(test_results, end_bike_count = as.data.frame(bikecount.hex.test$ending_bike_count))
+plot(test_results$end_bike_count_pred, test_results$end_bike_count)
+
+test_error = (test_results$end_bike_count_pred == test_results$ending_bike_count)
+
+#COmpare training set results
+train_results = list()
+## Converting H2O format into data frame 
+for (y in response){
+  df_yhat_train <- as.data.frame(h2o.predict(models[[y]], bikecount.hex.train[,predictors]) ) 
+  predH2O<- df_yhat_train$predict 
+  train_results[[y]] <- data.frame('pred' = as.integer(predH2O), 'real' = as.data.frame(bikecount.hex.train[[y]]))
+  plot(train_results[[y]]$pred, train_results[[y]][[y]]) 
+  #fit2<-lm(eval(y) ~ pred,data=results[[y]]) 
+  #summary(fit2)
+}
+
+pdf("hist_h2o.pdf") 
+dev.off() 
+
+
+m2 <- h2o.deeplearning(
+  model_id="dl_model_faster", 
+  training_frame=bikecount.hex.train,
+  validation_frame=bikecount.hex.valid,   ## validation dataset: used for scoring and early stopping
+  x=predictors,
+  y=response,
+  hidden=c(32,32,32),                  ## small network, runs faster
+  epochs=1000000,                      ## hopefully converges earlier...
+  score_validation_samples=10000,      ## sample the validation dataset (faster)
+  stopping_rounds=2,
+  stopping_metric="MSE",               ## could be "MSE","logloss","r2"
+  stopping_tolerance=0.01
+)
+summary(m2)
+plot(m2)
