@@ -18,6 +18,9 @@ gpclibPermit()
 
 citi_hex = "#146EFF"
 orange_hex = "#FF5910"
+training_start_date = '2016-01-01'
+training_end_date = '2016-02-1'
+testing_start_date = '2017-01-01'
 
 myPostgres<- src_postgres(dbname="nyc-citibike-data",
                           host="dsla.c0l5qodhdfzv.us-east-1.rds.amazonaws.com",#192.168.15.254
@@ -298,19 +301,20 @@ ggplot(data = by_sta_213_tues_wed,
         legend.key.width = unit(2, "lines"))
 
 #Build model to predict number of bikes available at each station at any given time
-bike_count = dbGetQuery(myPostgres$con, 
-                      "select bcs.*, s.name, 
-                            w.precipitation, w.snow_depth, w.max_temperature, w.average_wind_speed,
-                            s.latitude, s.longitude 
-                      from bike_count_at_stations bcs
-                      left join central_park_weather_observations w
-                        on w.date = date(bcs.interval)
-                      inner join stations s
-                        on s.id = bcs.station_id
-                      where
-                        date(interval) >= '2016-01-01' 
-                        and date(interval) < '2016-02-01'
-                      order by s.name, interval")
+bike_count = dbGetQuery(myPostgres$con, sprintf(
+                                            'select bcs.*, s.name, 
+                                                  w.precipitation, w.snow_depth, w.max_temperature, w.average_wind_speed,
+                                                  s.latitude, s.longitude 
+                                            from bike_count_at_stations bcs
+                                            left join central_park_weather_observations w
+                                              on w.date = date(bcs.interval)
+                                            inner join stations s
+                                              on s.id = bcs.station_id
+                                            where
+                                              date(interval) >= \'%s\' 
+                                              and date(interval) < \'%s\'
+                                            order by s.name, interval', training_start_date, training_end_date)
+                                          )
 
 bike_count <- bike_count %>%
   select('interval', 'day_of_week', 'holiday', 'name', 
@@ -327,15 +331,16 @@ by_bike_count <- bike_count %>%
   group_by(name) %>%
   mutate(beginning_count = lag_1(ending_bike_count))  %>%
   filter(!is.na(beginning_count)) %>%
-  select(-interval)  %>%
-  select("day_of_week", "holiday", 'precipitation', 'snow_depth', 'max_temperature', 
+  #select(-interval)  %>%
+  select("day_of_week", "interval", "holiday", 'precipitation', 'snow_depth', 'max_temperature', 
          'average_wind_speed',"depart_count", "new_bike_count", 
           "arrive_count", "removed_count", "name", "beginning_count", 
           "ending_bike_count")  
 
-Ttrain = nrow(by_bike_count[format(by_bike_count$interval, '%Y-%m-%d') < '2016-01-31',])
+Ttrain = nrow(by_bike_count[format(by_bike_count$interval, '%Y-%m-%d') < testing_start_date,])
 Total_rows <- nrow(by_bike_count)
 
+setwd() #set current working directory
 by_bike_count %>%
   write.csv(file = 'bike_count_data.csv') 
   
@@ -344,7 +349,7 @@ by_bike_count %>%
 
 ##Apply h2o deep learning
 localH2O <- h2o.init(ip = "localhost", port = 54321, startH2O = TRUE) 
-remoteH2O <- h2o.init(ip='34.200.247.252', startH2O=FALSE, port = 54321, nthreads = -1) #  Connection successful!
+#remoteH2O <- h2o.init(ip='34.200.247.252', startH2O=FALSE, port = 54321, nthreads = -1) #  Connection successful!
 
 # Push the data into h2o
 bikecount.hex = h2o.importFile(path = "bike_count_data.csv", destination_frame = "bikecount.hex")
@@ -352,7 +357,7 @@ class(bikecount.hex)
 summary(bikecount.hex)
 
 #RM ending_bike_count
-bikecount.hex = bikecount.hex[,-1]
+#bikecount.hex = bikecount.hex[,-1]
 
 # Create a training set from the 1st dataset in the split
 bikecount.hex.train <- bikecount.hex[1:Ttrain,] # before 2017
@@ -360,11 +365,14 @@ bikecount.hex.train <- bikecount.hex[1:Ttrain,] # before 2017
 # Create a testing set from the 2nd dataset in the split
 bikecount.hex.test <- bikecount.hex[Ttrain:Total_rows,] # 2017
 
+#Devide predictors(independant variables) and responses(dependant variables)
 response <- c("depart_count", "new_bike_count", 
               "arrive_count", "removed_count")
 predictors <- setdiff(names(bikecount.hex), response)
 
-predictors <- predictors[! predictors %in% c('C1', 'ending_bike_count')]
+#Remove unnecessary predictors
+predictors <- predictors[! predictors %in% c('C1', 'interval', 'ending_bike_count')]
+
 #h2o deep net 
 models <- list()
 
@@ -373,7 +381,6 @@ for (y in response){
   
   models[[y]] <- h2o.deeplearning(model_id="dl_model_faster", 
                                   training_frame=bikecount.hex.train,
-                                  validation_frame=bikecount.hex.valid,   ## validation dataset: used for scoring and early stopping
                                   x=predictors,
                                   y=y,
                                   hidden=c(32,32,32),                  ## small network, runs faster
@@ -399,16 +406,31 @@ for (y in response){
   test_results = cbind(test_results, y = as.integer(predH2O))
 }
 
+bikecount.df.test = as.data.frame(bikecount.hex.test)
 colnames(test_results) = c('name', response)
-test_results = cbind(test_results, beginning_count = as.data.frame(bikecount.hex.test$beginning_count))
+test_results = cbind(test_results, beginning_count = bikecount.df.test$beginning_count)
+
 test_results = cbind(test_results, end_bike_count_pred = 
                                           test_results$beginning_count
                                           +test_results$arrive_count - test_results$depart_count 
                                           -test_results$removed_count + test_results$new_bike_count)
-test_results = cbind(test_results, end_bike_count = as.data.frame(bikecount.hex.test$ending_bike_count))
+test_results = cbind(test_results, end_bike_count = bikecount.df.test$ending_bike_count)
+
+#update beginning count based on ending count in previous hour
+test_results$beginning_count = lag_1(test_results$end_bike_count_pred)
+#Fill in NA in first beginning count from known values in test
+test_results[1, 'beginning_count'] = bikecount.df.test[1, 'beginning_count']
+
+#recalc ending count baased on new beginning count
+test_results$end_bike_count_pred = test_results$beginning_count+
+                                      test_results$arrive_count - test_results$depart_count -
+                                      test_results$removed_count + test_results$new_bike_count
+
 plot(test_results$end_bike_count_pred,test_results$end_bike_count,type='l',col="black", main="H2O Deep Learning")
 
 test_error = sum(test_results$end_bike_count_pred == test_results$ending_bike_count) / nrow(test_results)
+
+test_error
 
 #COmpare training set results
 train_results = list()
