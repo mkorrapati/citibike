@@ -333,6 +333,9 @@ by_bike_count <- bike_count %>%
           "arrive_count", "removed_count", "name", "beginning_count", 
           "ending_bike_count")  
 
+Ttrain = nrow(by_bike_count[format(by_bike_count$interval, '%Y-%m-%d') < '2016-01-31',])
+Total_rows <- nrow(by_bike_count)
+
 by_bike_count %>%
   write.csv(file = 'bike_count_data.csv') 
   
@@ -351,17 +354,11 @@ summary(bikecount.hex)
 #RM ending_bike_count
 bikecount.hex = bikecount.hex[,-1]
 
-# Split dataset giving the training dataset 75% of the data
-bikecount.split <- h2o.splitFrame(data=bikecount.hex, c(0.6,0.2), seed=1234)
-
 # Create a training set from the 1st dataset in the split
-bikecount.hex.train <- bikecount.split[[1]] #60%
+bikecount.hex.train <- bikecount.hex[1:Ttrain,] # before 2017
 
 # Create a testing set from the 2nd dataset in the split
-bikecount.hex.test <- bikecount.split[[2]] #20%
-
-# Create a testing set from the 2nd dataset in the split
-bikecount.hex.valid <- bikecount.split[[3]] #20%
+bikecount.hex.test <- bikecount.hex[Ttrain:Total_rows,] # 2017
 
 response <- c("depart_count", "new_bike_count", 
               "arrive_count", "removed_count")
@@ -409,9 +406,9 @@ test_results = cbind(test_results, end_bike_count_pred =
                                           +test_results$arrive_count - test_results$depart_count 
                                           -test_results$removed_count + test_results$new_bike_count)
 test_results = cbind(test_results, end_bike_count = as.data.frame(bikecount.hex.test$ending_bike_count))
-plot(test_results$end_bike_count_pred, test_results$end_bike_count)
+plot(test_results$end_bike_count_pred,test_results$end_bike_count,type='l',col="black", main="H2O Deep Learning")
 
-test_error = (test_results$end_bike_count_pred == test_results$ending_bike_count)
+test_error = sum(test_results$end_bike_count_pred == test_results$ending_bike_count) / nrow(test_results)
 
 #COmpare training set results
 train_results = list()
@@ -427,20 +424,3 @@ for (y in response){
 
 pdf("hist_h2o.pdf") 
 dev.off() 
-
-
-m2 <- h2o.deeplearning(
-  model_id="dl_model_faster", 
-  training_frame=bikecount.hex.train,
-  validation_frame=bikecount.hex.valid,   ## validation dataset: used for scoring and early stopping
-  x=predictors,
-  y=response,
-  hidden=c(32,32,32),                  ## small network, runs faster
-  epochs=1000000,                      ## hopefully converges earlier...
-  score_validation_samples=10000,      ## sample the validation dataset (faster)
-  stopping_rounds=2,
-  stopping_metric="MSE",               ## could be "MSE","logloss","r2"
-  stopping_tolerance=0.01
-)
-summary(m2)
-plot(m2)
