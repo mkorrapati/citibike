@@ -427,7 +427,7 @@ test_results$end_bike_count_pred = test_results$beginning_count+
                                       test_results$arrive_count - test_results$depart_count -
                                       test_results$removed_count + test_results$new_bike_count
 
-plot(test_results$end_bike_count_pred,test_results$end_bike_count,type='l',col="black", main="H2O Deep Learning")
+#plot(test_results$end_bike_count_pred,test_results$end_bike_count,type='l',col="black", main="H2O Deep Learning")
 
 test_error = sum(test_results$end_bike_count_pred == test_results$ending_bike_count) / nrow(test_results)
 
