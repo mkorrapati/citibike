@@ -328,11 +328,12 @@ by_bike_count <- bike_count %>%
   mutate_at(funs(as.factor), .vars = c("holiday", "name")) %>%
   mutate(day_of_week = factor(weekdays(interval)))  %>%
   arrange(name, interval) %>%
+  mutate(hour_of_day = factor(as.POSIXlt(interval)$hour))  %>%
   group_by(name) %>%
   mutate(beginning_count = lag_1(ending_bike_count))  %>%
   filter(!is.na(beginning_count)) %>%
   #select(-interval)  %>%
-  select("day_of_week", "interval", "holiday", 'precipitation', 'snow_depth', 'max_temperature', 
+  select("day_of_week", "interval","hour_of_day", "holiday", 'precipitation', 'snow_depth', 'max_temperature', 
          'average_wind_speed',"depart_count", "new_bike_count", 
           "arrive_count", "removed_count", "name", "beginning_count", 
           "ending_bike_count")  
@@ -439,17 +440,9 @@ for (y in response){
   h2o.saveModel(models[[y]], path = "models") # define your path here
 }
 
-# #COmpare training set results
-# train_results = list()
-# ## Converting H2O format into data frame 
-# for (y in response){
-#   df_yhat_train <- as.data.frame(h2o.predict(models[[y]], bikecount.hex.train[,predictors]) ) 
-#   predH2O<- df_yhat_train$predict 
-#   train_results[[y]] <- data.frame('pred' = as.integer(predH2O), 'real' = as.data.frame(bikecount.hex.train[[y]]))
-#   plot(train_results[[y]]$pred, train_results[[y]][[y]]) 
-#   #fit2<-lm(eval(y) ~ pred,data=results[[y]]) 
-#   #summary(fit2)
-# }
-# 
-# pdf("hist_h2o.pdf") 
-# dev.off() 
+#Load models from disk
+models_disk <- list()
+for (y in response){
+  # the model will be saved as "./folder_for_myDRF/myDRF"
+  models_disk[[y]] <- h2o.loadModel(path = paste0("models/dl_model_faster_", y))
+}
