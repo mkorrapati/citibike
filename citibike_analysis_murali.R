@@ -19,7 +19,7 @@ gpclibPermit()
 citi_hex = "#146EFF"
 orange_hex = "#FF5910"
 training_start_date = '2016-01-01'
-training_end_date = '2016-02-1'
+training_end_date = '2017-07-31'
 testing_start_date = '2017-01-01'
 
 myPostgres<- src_postgres(dbname="nyc-citibike-data",
@@ -193,11 +193,11 @@ ggplot(data = by_sta_213,
   scale_y_continuous("Trips, monthly\n", labels = comma) +
   expand_limits(y = 0) +
   ggtitle("Monthly Citi Bike Trips to W St & Chambers St", "Based on Citi Bike system data") + 
-  theme_wsj(base_size = 12) +
+  theme_wsj(base_size = 8) +
   theme(legend.position = "bottom",
         legend.direction = "vertical",
         legend.margin = unit(0, "lines"),
-        legend.text = element_text(size = rel(1.1)),
+        legend.text = element_text(size = rel(0.75)),
         legend.key.height = unit(1.7, "lines"),
         legend.key.width = unit(2, "lines"))
 
@@ -216,11 +216,11 @@ ggplot(data = by_sta_213_weekday,
   scale_y_continuous("Trips, weeklys\n", labels = comma) +
   expand_limits(y = 0) +
   ggtitle("Weekly Citi Bike Trips to W St & Chambers St", "Based on Citi Bike system data") + 
-  theme_wsj(base_size = 12) +
+  theme_wsj(base_size = 8) +
   theme(legend.position = "bottom",
         legend.direction = "vertical",
         legend.margin = unit(0, "lines"),
-        legend.text = element_text(size = rel(1.1)),
+        legend.text = element_text(size = rel(0.75)),
         legend.key.height = unit(1.7, "lines"),
         legend.key.width = unit(2, "lines"))
 
@@ -257,7 +257,7 @@ ggplot(data = filter(by_sta_213_start_sta, start_station_id %in% top_10_start_st
   theme(legend.position = "bottom",
         legend.direction = "horizontal",
         legend.margin = unit(0, "lines"),
-        legend.text = element_text(size = rel(1.1)),
+        legend.text = element_text(size = rel(0.75)),
         legend.key.height = unit(1.7, "lines"),
         legend.key.width = unit(2, "lines"))
 
@@ -276,8 +276,8 @@ sta_213_tues_wed = dbGetQuery(myPostgres$con,
                         AND end_station_id = 213
                       GROUP BY hour, date, weekday, start_station_id, end_station_id;")
 
-sta_213_tues_wed %>%
-  select('hour', 'date', 'weekday', 'end_station_id', 'start_station_id', 'trips')
+sta_213_tues_wed <- sta_213_tues_wed %>%
+          select('hour', 'date', 'weekday', 'end_station_id', 'start_station_id', 'trips')
 
 by_sta_213_tues_wed = sta_213_tues_wed %>%
   filter(hour %in% c(7, 8, 9, 17, 18, 19)) %>%
@@ -296,7 +296,7 @@ ggplot(data = by_sta_213_tues_wed,
   theme(legend.position = "bottom",
         legend.direction = "horizontal",
         legend.margin = unit(0, "lines"),
-        legend.text = element_text(size = rel(1.1)),
+        legend.text = element_text(size = rel(1)),
         legend.key.height = unit(0.5, "lines"),
         legend.key.width = unit(2, "lines"))
 
@@ -341,7 +341,7 @@ by_bike_count <- bike_count %>%
 Ttrain = nrow(by_bike_count[format(by_bike_count$interval, '%Y-%m-%d') < testing_start_date,])
 Total_rows <- nrow(by_bike_count)
 
-setwd() #set current working directory
+#setwd() #set current working directory
 by_bike_count %>%
   write.csv(file = 'bike_count_data.csv') 
   
@@ -380,7 +380,7 @@ models <- list()
 
 for (y in response){
   
-  models[[y]] <- h2o.deeplearning(model_id="dl_model_faster", 
+  models[[y]] <- h2o.deeplearning(model_id=paste0("dl_model_faster_", y), 
                                   training_frame=bikecount.hex.train,
                                   x=predictors,
                                   y=y,
@@ -396,7 +396,8 @@ for (y in response){
 }
 lapply(models, summary)
 
-test_results = data.frame("name" = as.data.frame(bikecount.hex.test)[['name']])
+bikecount.df.test = as.data.frame(bikecount.hex.test)
+test_results = data.frame("name" = bikecount.df.test$name)
 
 ## outsample 
 ## Converting H2O format into data frame 
@@ -407,7 +408,6 @@ for (y in response){
   test_results = cbind(test_results, y = as.integer(predH2O))
 }
 
-bikecount.df.test = as.data.frame(bikecount.hex.test)
 colnames(test_results) = c('name', response)
 test_results = cbind(test_results, beginning_count = bikecount.df.test$beginning_count)
 
@@ -446,18 +446,3 @@ for (y in response){
   # the model will be saved as "./folder_for_myDRF/myDRF"
   models_disk[[y]] <- h2o.loadModel(path = paste0("models/dl_model_faster_", y))
 }
-
-#COmpare training set results
-train_results = list()
-## Converting H2O format into data frame 
-for (y in response){
-  df_yhat_train <- as.data.frame(h2o.predict(models[[y]], bikecount.hex.train[,predictors]) ) 
-  predH2O<- df_yhat_train$predict 
-  train_results[[y]] <- data.frame('pred' = as.integer(predH2O), 'real' = as.data.frame(bikecount.hex.train[[y]]))
-  plot(train_results[[y]]$pred, train_results[[y]][[y]]) 
-  #fit2<-lm(eval(y) ~ pred,data=results[[y]]) 
-  #summary(fit2)
-}
-
-pdf("hist_h2o.pdf") 
-dev.off() 
