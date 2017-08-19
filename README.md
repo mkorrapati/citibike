@@ -1,2 +1,2 @@
 # citibike
-Analyse citibike data
+This code is to build a prediction model to estimate number of available citibikes at a given docking station at any time of the day based on demand and supply of citibikes at that station until that point. Data was gathered from variety of sources like citibikes website, weather.gov and social events by web scraping. Performed cleansing of data by imputing missing data, treating data inconsistency, and normalizing it for analysis. Used deep learning algorithm using H2O package with grid search. Achieved extremely high model accuracy of 86% to estimate available bikes at any hour of the day for next 7 days. Build shiny app to enable users to benefit from the model.
