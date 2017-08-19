@@ -18,7 +18,7 @@ gpclibPermit()
 
 citi_hex = "#146EFF"
 orange_hex = "#FF5910"
-training_start_date = '2016-01-01'
+training_start_date = '2016-08-01'
 training_end_date = '2017-07-31'
 testing_start_date = '2017-01-01'
 
@@ -98,16 +98,53 @@ monthly = dbGetQuery(myPostgres$con,
                      "SELECT mthly.*, sta.name as station_name FROM monthly_station_aggregates mthly
                         INNER JOIN stations sta
                           ON mthly.end_station_id = sta.id
-                      ORDER BY month")
+                      ORDER BY month DESC")
+
+monthly_usage = monthly %>%
+  select('month', 'end_station_id', 'station_name', 'total_drop_offs') %>%
+  #filter(month >= "2016-08-01") %>%
+  left_join(station_id_map) %>% 
+  # copy unchanged items
+  mutate(station_id_new = if_else(is.na(station_id_new), end_station_id, station_id_new)) %>% 
+  mutate(year = as.factor(lubridate::year(month))) %>% 
+  group_by(month) %>%
+  mutate(total  = sum(total_drop_offs)) %>%
+  ungroup() %>%
+  group_by(year) %>%
+  mutate(avg = mean(total)) %>%
+  ungroup() %>%
+  group_by(month) 
+  #arrange(desc(total), .by_group = TRUE) %>%
+  #top_n(20) 
+
+ggplot(data = monthly_usage, 
+       aes(x = month, y = total)) + 
+  geom_line(aes(y=total),lty="dotted",color="Blue")+
+  #geom_point(aes(y=avg,colour="Year"),shape=8,size=5)+
+  stat_smooth(aes(y=avg), method=lm)+
+  #geom_abline() +
+  scale_x_date("Monthly Breakdown") +
+  scale_y_continuous("Citi Bike trips at top stations, monthly\n", labels = comma) +
+  expand_limits(y = 0) +
+  ggtitle("NYC Monthly Citi Bike Trips", "Based on Citi Bike system data") + 
+  theme_pander(base_size = 12, base_family = "sans", nomargin = TRUE,
+               gc = "grey", gl = "dashed", boxes = FALSE, bc = "white",
+               pc = "transparent", lp = "right", axis = 1) +
+  theme(legend.position = "bottom",
+        legend.direction = "vertical",
+        legend.margin = unit(0, "lines"),
+        legend.text = element_text(size = rel(1.1)),
+        legend.key.height = unit(1.7, "lines"),
+        legend.key.width = unit(2, "lines"))
 
 by_station = monthly %>%
   select('month', 'end_station_id', 'station_name', 'total_drop_offs') %>%
-  filter((month >= "2016-01-01" & month < "2016-08-01") | month >= "2017-01-01") %>%
+  filter(month >= "2016-08-01") %>%
   left_join(station_id_map) %>% 
   # copy unchanged items
   mutate(station_id_new = if_else(is.na(station_id_new), end_station_id, station_id_new)) %>% 
   #filter(station_id_new == 34511) %>%   #For testing
-  mutate(year = factor(year(month))) %>%
+  mutate(year = factor(lubridate::year(month))) %>%
   group_by(year, station_id_new,station_name) %>%
   summarise(total  = sum(total_drop_offs)) %>%
   ungroup() %>%
@@ -122,7 +159,7 @@ ggplot(data = by_station,
   scale_y_continuous("", labels = comma) +
   ggtitle("Compare monthly trips in 2016 and 2017", "Based on Citi Bike system data") +
   xlab('Trips') + 
-  theme_wsj(base_size = 8) +
+  theme_pander(base_size = 12) +
   theme(legend.position = "bottom",
         legend.direction = "horizontal",
         legend.margin = unit(0, "lines"),
@@ -130,12 +167,61 @@ ggplot(data = by_station,
         legend.key.height = unit(1.7, "lines"),
         legend.key.width = unit(2, "lines"),
         axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
-  
-  by_month = monthly %>%
+
+new_year <- dbGetQuery(myPostgres$con, 
+                         "SELECT
+                        EXTRACT(DOW FROM start_time) BETWEEN 1 AND 5 AS weekday,
+                        ss.name as start_name,
+                        es.name as end_name,
+                        date(start_time) AS date,
+                        start_station_id,
+                        end_station_id,
+                        COUNT(*) AS trips
+                      FROM trips t 
+                      LEFT JOIN stations ss 
+                        ON ss.id = t.start_station_id
+                      LEFT JOIN stations es
+                        ON es.id = t.end_station_id
+                      WHERE date(start_time) BETWEEN to_date('2016-12-01','YYYY-MM-DD') 
+                        AND to_date('2017-01-31','YYYY-MM-DD')
+                      GROUP BY weekday, date, start_station_id, end_station_id, ss.name, es.name;")
+
+by_new_year = new_year %>%
+  select(date, end_name, end_station_id, trips, weekday) %>%
+  filter(date(date) >= as.Date('2016-12-17', format = '%Y-%m-%d') &
+           date(date) <= as.Date('2017-01-10', format = '%Y-%m-%d')) %>% 
+  left_join(station_id_map) %>% 
+  # copy unchanged items
+  #mutate(by_date = ) %>% 
+  mutate(station_id_new = if_else(is.na(station_id_new), end_station_id, station_id_new)) %>% 
+  #mutate(year = factor(lubridate::year(month))) %>%
+  group_by(date, weekday) %>%
+  summarise(total  = sum(trips)) %>%
+  ungroup() %>%
+  group_by(date, weekday) %>%
+  arrange(desc(total), .by_group = TRUE) 
+
+ggplot(data = by_new_year, 
+       aes(x = as.factor(date), y = total, fill = weekday)) + 
+  geom_bar(stat = "identity", position = 'dodge') +
+  scale_x_discrete(expand = c(0, 0)) +
+  scale_y_continuous("", labels = comma) +
+  ggtitle("Trips during holidays in 2016", "Based on Citi Bike system data") +
+  xlab('Trips') + 
+  theme_wsj(base_size = 12) +
+  theme(legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.margin = unit(0, "lines"),
+        legend.text = element_text(size = rel(1.1)),
+        legend.key.height = unit(1.7, "lines"),
+        legend.key.width = unit(2, "lines"),
+        axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+
+by_month = monthly %>%
   select('month', 'end_station_id', 'station_name', 'total_drop_offs') %>%
   filter(month >= "2016-01-01") %>%
   group_by(end_station_id,station_name, month) %>%
-  mutate(month_for_x_axis = month(month, label = TRUE)) %>%
+  mutate(month_for_x_axis = lubridate::month(month, label = TRUE)) %>%
   summarize(total = sum(total_drop_offs)) %>%
   arrange(desc(total)) 
 
@@ -193,11 +279,11 @@ ggplot(data = by_sta_213,
   scale_y_continuous("Trips, monthly\n", labels = comma) +
   expand_limits(y = 0) +
   ggtitle("Monthly Citi Bike Trips to W St & Chambers St", "Based on Citi Bike system data") + 
-  theme_wsj(base_size = 8) +
+  theme_wsj(base_size = 7) +
   theme(legend.position = "bottom",
         legend.direction = "vertical",
         legend.margin = unit(0, "lines"),
-        legend.text = element_text(size = rel(0.75)),
+        legend.text = element_text(size = rel(1.0)),
         legend.key.height = unit(1.7, "lines"),
         legend.key.width = unit(2, "lines"))
 
@@ -215,12 +301,12 @@ ggplot(data = by_sta_213_weekday,
   scale_x_date("Weekly Breakdown") + 
   scale_y_continuous("Trips, weeklys\n", labels = comma) +
   expand_limits(y = 0) +
-  ggtitle("Weekly Citi Bike Trips to W St & Chambers St", "Based on Citi Bike system data") + 
-  theme_wsj(base_size = 8) +
+  ggtitle("Weekday Citi Bike Trips to W St & Chambers St", "Based on Citi Bike system data") + 
+  theme_wsj(base_size = 7) +
   theme(legend.position = "bottom",
         legend.direction = "vertical",
         legend.margin = unit(0, "lines"),
-        legend.text = element_text(size = rel(0.75)),
+        legend.text = element_text(size = rel(1.0)),
         legend.key.height = unit(1.7, "lines"),
         legend.key.width = unit(2, "lines"))
 
@@ -234,7 +320,7 @@ by_sta_213_start_sta = sta_213 %>%
 top_10_start_sta_to_213 = c(38736, 39987, 41246, 39988, 38735, 41247, 39984, 39982, 38734, 41160)
 ################
 #station_id |           name           |         min         
-#------------+--------------------------+---------------------
+#--------+--------------------------+---------------------
 #  38734 | E 53 St & 3 Ave          | 2017-04-01 09:00:00
 #  38735 | E 44 St & 2 Ave          | 2017-04-19 17:00:00
 #  38736 | E 16 St & Irving Pl      | 2017-04-19 12:00:00
@@ -253,11 +339,12 @@ ggplot(data = filter(by_sta_213_start_sta, start_station_id %in% top_10_start_st
   scale_y_continuous("Trips\n", labels = comma) +
   expand_limits(y = 0) +
   ggtitle("Citi Bike Trips to W St & Chambers St in 2017", "Based on Citi Bike system data") + 
-  theme_wsj(base_size = 8) +
+  guides(color=guide_legend(title='')) +
+  theme_wsj(base_size = 7) +
   theme(legend.position = "bottom",
         legend.direction = "horizontal",
-        legend.margin = unit(0, "lines"),
-        legend.text = element_text(size = rel(0.75)),
+        legend.margin = margin(0,0,0,0, unit = "lines"),
+        legend.text = element_text(size = rel(1)),
         legend.key.height = unit(1.7, "lines"),
         legend.key.width = unit(2, "lines"))
 
@@ -292,10 +379,11 @@ ggplot(data = by_sta_213_tues_wed,
   scale_y_continuous("Trips, hourly\n", labels = comma) +
   expand_limits(y = 0) +
   ggtitle("Hourly Citi Bike Trips to W St & Chambers St", "Based on Citi Bike system data") + 
-  theme_wsj(base_size = 8) +
+  guides(color=guide_legend(title='Hourly')) +
+  theme_wsj(base_size = 7) +
   theme(legend.position = "bottom",
         legend.direction = "horizontal",
-        legend.margin = unit(0, "lines"),
+        legend.margin = margin(0,0,0,0, unit =  "lines"),
         legend.text = element_text(size = rel(1)),
         legend.key.height = unit(0.5, "lines"),
         legend.key.width = unit(2, "lines"))
@@ -437,12 +525,12 @@ test_error
 for (y in response){
   # Save the DRF model to disk
   # the model will be saved as "./folder_for_myDRF/myDRF"
-  h2o.saveModel(models[[y]], path = "models") # define your path here
+  h2o.saveModel(models[[y]], path = "citibikeApp/models") # define your path here
 }
 
 #Load models from disk
 models_disk <- list()
 for (y in response){
   # the model will be saved as "./folder_for_myDRF/myDRF"
-  models_disk[[y]] <- h2o.loadModel(path = paste0("models/dl_model_faster_", y))
+  models_disk[[y]] <- h2o.loadModel(path = paste0("citibikeApp/models/dl_model_faster_", y))
 }
