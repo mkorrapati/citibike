@@ -1,0 +1,10 @@
+name: citi_bike_analysis
+title: Citi Bike Analysis
+account: citibike-mkorrapati
+server: shinyapps.io
+appId: 206043
+bundleId: 946816
+url: https://citibike-mkorrapati.shinyapps.io/citi_bike_analysis/
+when: 1503169060.52559
+asMultiple: FALSE
+asStatic: FALSE
